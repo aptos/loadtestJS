@@ -1,0 +1,11 @@
+{
+  "name": "blitz-engine",
+  "description": "blitz-engine node app",
+  "version": "0.0.1",
+  "private": true,
+  "files": ["src"],
+  "dependencies": {
+    "express": "3.0.0rc2"
+  },
+  "main": "lib/blitz-engine.js"
+}

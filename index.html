@@ -1,0 +1,445 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+ <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Blitz-EngineJS</title>
+    <link rel="stylesheet" type="text/css" href="http://netdna.bootstrapcdn.com/twitter-bootstrap/2.1.0/css/bootstrap-combined.min.css"></link>
+    <script language="javascript" type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
+    <script language="javascript" type="text/javascript" src="http://cdnjs.cloudflare.com/ajax/libs/flot/0.7/jquery.flot.min.js"></script>
+ </head>
+    <body>
+    <h1>Blitz-EngineJS</h1>
+    <div class="controller" style"padding-left: 20px float: left; width: 600px">
+        <div class="btn-group" style="padding-left: 20px; float: left; width: 600px">
+            <button class="rush btn btn-primary">Rush</button>
+            <button class="sprint btn btn-warning" >Sprint</button>
+            <button class="stop btn btn-danger" >Stop</button>
+            <button class="stats btn btn-info" >stats</button>
+            <button class="about btn btn-info" >about</button>
+        </div>
+        <div class="label label-info" style="float:left; width:90">
+            <em>Credits: <span style="color:white;" id="cost">1</span></em>
+        </div>
+        <div style="padding-left: 20px; float: left;">
+            <input class="blitz-bar" value="-p 1-10:10 http://localhost" spellcheck="false" type="text" style="font-size:1.14em; width:788px">
+            <img class="icon-plus add-blitz-bar" style="position:relative; top: -10px; left:-20px;">
+        </div>
+    </div>
+    <div class="data" style="padding-left:20px; width:1400px;">
+        <div id="chart" style="padding-left:10px; width:800px; height:400px; float:left; border:1px"></div>
+        <div id="stats" style="float:left; padding-left:10px; border:1px "></div>
+        <div id="about" style="float:left; padding-left:10px; border:1px "></div>
+    </div>
+    <div style="padding-left:10px; width:800px; float: left;">
+        <div id="selected"> </div>
+        <a href="/chart_data">chart data</a>
+    </div>
+    <p>
+
+<script type="text/javascript">
+$(document).ready( function() {
+    var defaults = {
+      request: {
+        host: "localhost",
+        path: "/",
+        method: "GET",
+        timeout: 10000,
+        headers: {}
+      },
+      data: [],
+      variables: {},
+      pattern: {
+        start: 1,
+        end: 10, 
+        duration: 10,
+        hold: 0
+      },
+      chart: {
+        interval: 1,
+        rates: ['requests','pass', 'timeouts', 'errors','rx_bytes'],
+        values: ['volume'],
+        avg: ['active_connections','response_time']
+      }
+    };
+    
+    var runParams = $.extend(true, {}, defaults)
+
+    function _assert(v, message) {
+        if (!v) {
+            throw new Error(message);
+        }
+    };
+
+    var MAP = {'n': '\n', 'r': '\r', 't': '\t', '\\': '\\', "'": "'", '"': '"'};
+    var RE_SLASH = /\\[ntr'"\\]/g;
+    var RE_HEX = /\\x[0-9a-fA-F]{1,2}/g;
+    var RE_WS = /^\s+/;
+    var RE_NOT_WS = /^[^\s]+/;
+    var RE_DQ_STRING = /^"[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*"/;
+    var RE_SQ_STRING = /^'[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*'/;
+
+    function unescape(str) {
+        return str
+            .replace(RE_HEX, function (h) {
+                return String.fromCharCode(parseInt(h.substr(2, 2), 16));
+            })
+            .replace(RE_SLASH, function (e) {
+                return MAP[e.charAt(1)];
+            });
+    }
+
+    function xargs(text) {
+        var argv = [];
+        while (text && text.length !== 0) {
+            if (RE_WS.test(text)) {
+                text = RegExp.rightContext;
+            } else if (RE_DQ_STRING.test(text)) {
+                var dq_string = RegExp.lastMatch;
+                text = RegExp.rightContext;
+                argv.push(unescape(dq_string.substring(1, dq_string.length - 1)));
+            } else if (RE_SQ_STRING.test(text)) {
+                var sq_string = RegExp.lastMatch;
+                text = RegExp.rightContext;
+                argv.push(unescape(sq_string.substring(1, sq_string.length - 1)));
+            } else if (RE_NOT_WS.test(text)) {
+                text = RegExp.rightContext;
+                argv.push(unescape(RegExp.lastMatch));
+            } else {
+                text = text.substring(1, text.length - 1);
+            }
+        }
+        return argv;
+    }
+
+    function parseQuery(query) {
+        var argv = xargs(query);
+        runParams = $.extend(true, {}, defaults)
+
+        while (argv.length > 0) {
+            if (argv[0].charAt(0) !== '-') {
+                break;
+            }
+            k = argv.shift();
+            if (k === '--user-agent' || k === '-A') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.headers['User-Agent'] = v;
+            } else if (k === '--cookie' || k === '-b') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.headers['Cookie'] = v;
+            } else if (k === '--data' || k === '-d') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.data.push(v);
+                if (!runParams.request.headers['Content-Type']) {
+                    runParams.request.headers['Content-Type'] = "applications/x-www-form-urlencoded";
+                }
+            } else if (k === '--referer' || k === '-e') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.headers['Referer'] = v;
+            } else if (k === '--header' || k === '-H') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                _assert(/^(.+):\s(.+)$/.test(v), 'invalid header format');
+                runParams.request.headers[RegExp.$1] = RegExp.$2;
+            } else if (k === '--user' || k === '-u') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.headers['Authorization'] = v;
+            } else if (k === '--pattern' || k === '-p') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                _assert(/^(\d+)-(\d+):(\d+)(,(\d+))?$/.test(v), 'invalid ramp pattern');
+                runParams.pattern.start = parseInt(RegExp.$1);
+                runParams.pattern.end = parseInt(RegExp.$2);
+                runParams.pattern.duration = parseInt(RegExp.$3);
+                if (RegExp.$5) {
+                    runParams.pattern.hold = parseInt(RegExp.$5);
+                }
+            } else if (k === '--timeout' || k === '-T') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.timeout = parseInt(v, 10);
+            } else if (k === '--request' || k === '-X') {
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                runParams.request.method = v;
+            } else if (/^\-v:([^\s]+)/.test(k)) {
+                vn = RegExp.$1;
+                if (/^[a-zA-Z][a-zA-Z0-9]*$/.test(vn) === false) {
+                    throw new Error('variable name must be alphanumeric');
+                }
+                v = argv.shift();
+                _assert(v !== undefined, 'missing value for ' + k);
+                if (/^(list)?\[([^\]]+)\]$/.test(v)) {
+                    tokens = RegExp.$2.split(',');
+                    runParams.variables[vn] = {type: 'list', entries: tokens};
+                } else if (/^(a|alpha)$/.test(v)) {
+                    runParams.variables[vn] = {type: 'alpha'};
+                } else if (/^(a|alpha)\[(\d+),(\d+)\]$/.test(v)) {
+                    runParams.variables[vn] = {
+                        type: 'alpha',
+                        min: parseInt(RegExp.$2, 10),
+                        max: parseInt(RegExp.$3, 10)
+                    };
+
+                } else if (/^(n|number)\[(-?\d+),(-?\d+)\]$/.test(v)) {
+                    runParams.variables[vn] = {
+                        type: 'number',
+                        min: parseInt(RegExp.$2, 10),
+                        max: parseInt(RegExp.$3, 10)
+                    };
+                } else if (/^(u|udid)$/.test(v)) {
+                    runParams.variables[vn] = {type: 'udid'};
+                } else {
+                    throw new Error('unknown variable ' + v);
+                };
+            } else {
+                throw new Error('unknown option ' + k);
+            }
+        }
+        v = argv.shift();
+        _assert(v !== undefined, 'no URL specified!');
+        _assert(argv.length === 0, 'found extra arguments after the URL');
+        _assert(/^http:\/\/([^\/]+)(\/(.*))?/.test(v), 'invalid URL');
+        runParams.request.host = RegExp.$1;
+        runParams.request.path = RegExp.$2;            
+        host_port = runParams.request.host.split(":",2);
+        if (host_port[1]) {
+            runParams.request.host = host_port[0];
+            runParams.request.port = host_port[1];
+        }
+        return credits();
+    };
+
+    function credits() {
+        var credit_per_volume = 5000;
+        var credit_per_duration = 60;
+
+        var max_volume = Math.max(runParams.pattern.start, runParams.pattern.end);
+        var duration = runParams.pattern.duration + runParams.pattern.hold;
+        console.log("max_volume: " + max_volume + "duration: " + duration)
+        cost = Math.floor(Math.max(max_volume/credit_per_volume, 1) * Math.max(duration/credit_per_duration, 1));
+        return cost;
+    }
+
+    var chart_options = {
+        lines: { show: true },
+        points: { show: false, radius: 2 },
+        xaxis: {
+            min: 0,
+            minTickSize: 1,
+            max: 60,
+            tickFormatter: function (val, axis) {
+                if (val === 0.0) {
+                    return '';
+                } else if (val >= 60) {
+                    return (val / 60).toFixed(1) + ' min';
+                } else {
+                    return val.toFixed(0) + ' sec';
+                }
+            }
+        },
+        legend: { position: "nw" },
+        grid: {
+            autoHighlight: true,
+            hoverable: true,
+            labelMargin: 10,
+            borderWidth: 0,
+            backgroundColor: {
+                colors: ["#323232", "#000000"]
+            }
+        },                
+        crosshair: {
+            mode: "xy",
+            color: "rgba(100,183,230,0.2)"
+        }
+    };
+
+// data =   [ { label: "Foo", data: [ [10, 1], [17, -14], [30, 5] ] },
+//            { label: "Bar", data: [ [11, 13], [19, 11], [30, -7] ] } ];
+    var chart_data = null;
+    var chartTimer = 2500;
+    var timeoutId = null;
+    $.plot("#chart",[],chart_options)
+    function updateChart() {
+        chart_data = [];
+        var chart = $("#chart");
+        chart_options.xaxis.max = runParams.pattern.duration + runParams.pattern.hold + 5
+        // then fetch the data with jQuery
+        function onDataReceived(series) {
+            chart_data.push({ label: "Volume", data: series.data.volume });
+            chart_data.push({ label: "Hits/sec", data: series.data.requests });
+            chart_data.push({ label: "Pass/sec", data: series.data.pass });
+            chart_data.push({ label: "Timeouts/sec", data: series.data.timeouts });
+            chart_data.push({ label: "ResponseTime (ms)", data: series.data.response_time });
+            chart_data.push({ label: "active_connections", data: series.data.active_connections });
+
+            $.plot(chart, chart_data, chart_options);
+            if (series.finished) {
+                console.info("finished!")
+                stop();
+            };
+         }
+        
+        $.ajax({
+            url: "/chart_data",
+            type: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                if(data.data) { onDataReceived(data) }
+                if (data.finished) {
+                    console.log("finished")
+                    clearTimeout(timeoutId);
+                    return;
+                } else {
+              // Schedule the next request when the current one's complete
+                    timeoutId = setTimeout(updateChart, chartTimer);
+                }
+            }
+        });
+        
+    };
+
+    function plotPoint(selected_x) {
+        var selected_stats = ["<strong>" + selected_x + "</strong>(s) "];
+        data_index = Math.floor(selected_x/runParams.chart.interval);
+        $.each(chart_data, function(index, value){
+            selected_stats.push("<strong>" + value.label + ": </strong>" + value['data'][data_index][1]);
+        });
+
+        $("#selected").html(selected_stats.join(", "))
+    };
+    
+    $("#chart").bind('plothover', function (event, pos, item) {
+        if(item) {
+            selected_x = Math.round(pos.x);
+            plotPoint(selected_x);
+        }
+    });
+
+    function updateStats(stats) {
+        var table = "<table class='table table-striped table-condensed'>"
+        $.each(stats.data, function(key, value) {
+            if (key === "codes") {
+                value = JSON.stringify(value);
+            }
+            table += "<tr><td>" + key + "</td><td>" + value + "</td></tr>";
+        })
+        table += "</table>";
+        $("#stats").html(table);
+    };
+
+    function stats(){
+        var stats_string = null;
+
+        $.ajax({
+            url: "/stats",
+            type: 'GET',
+            dataType: 'json',
+            success: updateStats
+        });
+        return;
+    };
+    $("button.stats").click(stats);
+
+    function rush(params) {
+        console.info(params)
+        $.post("/rush", params,
+            function(data) {
+                console.info("rushing..." + JSON.stringify(data));
+            },
+            'json'
+        )
+        return;
+    };
+
+    var statsId = null;
+    var statsInterval = 3000;
+    $("button.rush").click(function() {
+        parseQuery($("input.blitz-bar").val());
+        console.info("runParams: " + JSON.stringify(runParams))
+        rush(runParams);
+        setTimeout(function(){
+            updateChart(statsInterval);
+            statsId = setInterval(stats, statsInterval);
+            aboutId = setInterval(about, statsInterval);
+        }, 1000);
+    });
+
+    $("input.blitz-bar").bind('input', function() {
+        var cost = parseQuery($("input.blitz-bar").val());
+        $("#cost").html(cost);
+    });
+
+    $("img.add-blitz-bar").click(function() {
+        console.info("add-blitz-bar")
+        $("input.blitz-bar").last().after($("input.blitz-bar").last().clone());
+    });
+
+    function sprint(params) {
+        console.info(params)
+        $.post("/sprint", params,
+            function(data) {
+                updateStats(data);
+            },
+            'json'
+        )
+        return;
+    };
+    $("button.sprint").click(function() {
+        parseQuery($("input.blitz-bar").val());
+        console.info("runParams: " + JSON.stringify(runParams))
+        sprint(runParams);
+    });
+
+    function stop() { 
+        if(timeoutId){
+            clearTimeout(timeoutId);
+            timeoutId = null;
+        }
+        if(statsId){ 
+            clearInterval(statsId);
+            statsId = null; 
+        };
+        if(aboutId){ 
+            clearInterval(aboutId);
+            aboutId = null; 
+        };
+        $.ajax({
+            url: "/stop",
+            type: 'GET',
+            dataType: 'json',
+            success: null
+        });
+    };
+    $("button.stop").click(stop);
+
+    function updateAbout(info) {
+        var table = "<table class='table table-striped table-condensed'>"
+        $.each(info, function(key, value) {            
+            table += "<tr><td>" + key + "</td><td>" + value + "</td></tr>";
+        })
+        table += "</table>";
+        $("#about").html(table);
+    };
+
+    function about(){
+        var info = null;
+
+        $.ajax({
+            url: "/system",
+            type: 'GET',
+            dataType: 'json',
+            success: updateAbout
+        });
+        return;
+    };
+    $("button.about").click(about);
+});
+</script>
+
+ </body>
+</html>
