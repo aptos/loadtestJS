@@ -49,7 +49,8 @@ class ClientRequest
       req.write(@params.data.join("&"))
 
     req.on('socket', (socket) =>
-      socket.setTimeout(@params.timeout)
+      #socket.setTimeout(@params.timeout)
+      socket.setTimeout(10000)
       socket.on('timeout', () =>
         req.abort();
       )
